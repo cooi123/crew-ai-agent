@@ -35,7 +35,7 @@ uv sync
 To kickstart your crew of AI agents and begin task execution, run this from the root folder of your project:
 
 ```bash
-uv run crewai_plus_lead_scoring
+uv run app.py
 ```
 
 This command initializes the crewai-plus-lead-scoring Crew, assembling the agents and assigning them tasks as defined in your configuration.
