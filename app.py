@@ -1,5 +1,7 @@
 #!/usr/bin/env python
+import sys
 import os
+sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 import json
 import requests
 from flask import Flask, request, jsonify, Response
