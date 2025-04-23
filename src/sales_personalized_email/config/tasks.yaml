@@ -1,0 +1,72 @@
+research_prospect_task:
+  description: >
+    Conduct thorough research on {name}, their role as
+    {title} at {company}, and the company itself.
+    Look for recent news, achievements, challenges, or interests related to
+    {name} or their company in the {industry} industry.
+    Use their LinkedIn profile ({linkedin_url}) and other publicly
+    available sources to gather relevant information.
+  expected_output: >
+    A detailed dossier on {name} and {company},
+    including recent professional activities, potential pain points, interests,
+    and any other information that could be used to personalize communication.
+
+research_product_task:
+  description: >
+    Provide in-depth knowledge about {our_product} and its benefits.
+    Highlight features, benefits, and unique selling points that can be
+    relevant to {name}'s role and the challenges they may face.
+    Use the web to search for related information if necessary, use {product_url} as a starting point.
+  expected_output: >
+    A comprehensive overview of {our_product},
+    including key features, benefits, and unique selling points
+    that can be highlighted in the email to {name}.
+    Include any relevant case studies or success stories that can be used
+    to illustrate the value of {our_product}.
+
+personalize_content_task:
+  description: >
+    Using the research on {name} and {company},
+    identify specific ways that {our_product} with can address their potential needs
+    or align with their professional interests. Look for unique angles or shared
+    points of interest that can be used to create a strong personal connection
+    in the email.
+  expected_output: >
+    A list of personalized talking points and angles to use in the email,
+    connecting {name}'s background, interests, or challenges
+    with the benefits of {our_product}.
+
+write_email_task:
+  description: >
+    Craft a highly personalized outreach message (suitable for {platform}) to {name} about {our_product}.
+    Use research and personalized content to make the message feel individual, relevant, and engaging. Leverage the sender's role and goal ({my_profile}) to shape the message, emphasize a consultative, value-realization perspective.
+    The message must demonstrate understanding of their role/company challenges. 
+    Start with a strong, specific hook (e.g., referencing a recent talk like the XI Forum example, specific company news, a shared connection) to capture immediate attention. 
+    Showcase concisely how {our_product} addresses a key challenge or goal. Invite further, low-pressure conversation. If intended for LinkedIn, keep the total length under 150 words and adopt a more conversational style.
+  expected_output: >
+    A PersonalizedOutreach object containing:
+    Opening Hook/Subject Line: A compelling, personalized subject line (for Email) OR ensure the personalized hook is integrated effectively within the first sentence (for LinkedIn).
+    Message Body: Written in a tone appropriate for the platform (conversational for LinkedIn, slightly more formal but still engaging for Email) and the sender's role ({my_profile}). Must be concise, especially for LinkedIn (under 150 words).
+    Brief Introduction: Quickly introduce the sender and their relevance (linking {my_profile} to the potential value).
+    Clear, Low-Pressure Call to Action: Suggest a brief chat, offer to share insights, or ask a question to gauge interest (e.g., "Open to a brief chat?", "Curious if this resonates?", "Happy to share how peers are tackling this?").
+    Optional Brief Personalization: A very short additional personal touch, if appropriate.
+    Using the template provided in the file as a guide
+    Follow-up Notes: Suggested talking points or context for the sales/CSM person for future interactions, based on the message sent.
+
+review_email_task:
+  description: >
+    Review the outreach message written by the copywriter. Ensure it is polished, professional, and error-free. Critically evaluate the opening lines: Does it contain a strong, specific, and personalized hook relevant to the recipient?
+    Verify suitability for the intended platform (Email vs. LinkedIn):
+    For LinkedIn: Confirm the message is under 150 words, avoids email formalities (no "Dear/Sincerely", no separate subject line), uses a conversational, peer-to-peer tone, and has a low-pressure CTA.
+    For Email: Check for a clear subject line and appropriate professional structure, while still maintaining conciseness where possible.
+    Ensure the message clearly reflects the sender's role ({my_profile}) - if CSM, check for a consultative/value-focused tone, not just a sales pitch. Provide constructive feedback for improvement.
+  expected_output: >
+    A polished version of the outreach message. Include specific feedback notes on:
+    Hook Effectiveness: How compelling and personalized is the opening?
+    Conciseness & Length: Is it appropriately brief, especially for LinkedIn?
+    Platform Suitability: Does the format, tone, and structure match the intended platform (LinkedIn vs. Email)?
+    Tone & Role Alignment: Does the message reflect the sender's role ({my_profile}) accurately?
+    Clarity & Value Proposition: Is the benefit of {our_product} clear and linked to the recipient's context?
+    Call to Action: Is the CTA clear, appropriate, and low-pressure?
+    Overall Polish: Grammar, spelling, flow.
+    Ensure that the message follows the template provided in the file.
