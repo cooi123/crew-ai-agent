@@ -1,21 +1,25 @@
 import sys
 from crewai_plus_lead_scoring.crew import CrewaiPlusLeadScoringCrew
+from crewai import LLM
+
 
 def run(inputs):
     # Replace with your inputs, it will automatically interpolate any tasks and agents information
-    # inputs = {
+    # inputs= {
     #     "company": "IBM",
     #     "product_name": "IBM Watson",
     #     "product_description": "IBM Watson is a cognitive computing platform that uses natural language processing, machine learning, and deep learning to analyze vast amounts of data and answer questions in a way that mimics human understanding",
     #     "icp_description": "The ideal customer for IBM Watson is a mid-sized to large enterprise in industries such as healthcare, finance, retail, manufacturing, or government, seeking AI-powered solutions to enhance decision-making, automate workflows, and drive innovation. These organizations often face challenges in managing vast amounts of data, optimizing customer interactions, and implementing predictive analytics. Key decision-makers include CIOs, CTOs, data scientists, and business analysts who require advanced AI, natural language processing, and machine learning capabilities to improve operational efficiency and customer experiences. IBM Watson is best suited for tech-driven, data-heavy businesses looking for scalable and intelligent automation solutions on a global scale.",
     #     "form_response": [
     #         {
-    #             'question': "Give a score for your experince?",
-    #             'answer':'9/10, very satisfied'
+    #             "question": "Give a score for your experince?",
+    #             "answer":"9/10, very satisfied"
     #         }
     #     ],
     # }
-    result = CrewaiPlusLeadScoringCrew().crew().kickoff(inputs=inputs)
+    model = LLM(model="ollama/llama3.2:latest", base_url="http://localhost:11434")
+
+    result = CrewaiPlusLeadScoringCrew(model=model).crew().kickoff(inputs=inputs)
     
     # CrewaiPlusLeadScoringCrew().crew().train(inputs=inputs)
         

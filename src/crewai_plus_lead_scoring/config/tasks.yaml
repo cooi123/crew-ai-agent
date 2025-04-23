@@ -1,25 +1,17 @@
 lead_analysis_task:
   description: >
-    Analyze the lead's form responses to extract critical information that
-    might be useful for scoring them, planning a strategy to pitch them,
-    or anything that might be helpful for taking next steps on selling
-    them our {product_name}.
-
     We at {company} are more focused on {icp_description}.
+
+    You are to perform a detialed search on the web on companies at {location}.
+    This includes understanding what segment they belong to, how likely they are to benefit from {product_name},
+    and if anything about their market or role raises flags or opportunities.
 
     Let's not spend much time in leads that are not a good fit for us.
     Short answers from leads are a yellow flag
 
-
-    Lead Form Responses:
-    {form_response}
-
-
     {product_name}:
     {product_description}
   expected_output: >
-    Highlighting key implict or explicit information from the lead's form
-    responses that can be used for further research and scoring.
     We are looking for insights that can help us understand the lead's
     industry, company, and potential use cases.
 
@@ -35,10 +27,6 @@ research_task:
     Short answers from leads are a yellow flag.
 
 
-    Lead Form Responses:
-    {form_response}
-
-
     {product_name}:
     {product_description}
   expected_output: >
@@ -51,12 +39,10 @@ research_task:
 
 scoring_and_planning_task:
   description: >
-    Utilize the context and the lead's form response to score the lead.
+    Utilize the context to score the lead.
     Consider factors such as industry relevance, company size, specific {product_name}
     use case potential, and readiness for partnership.
-    Take into account the wording used on the form response and how lenghty
-    the response was to score the lead.
-    Based on the score, suggest the most appropriate stratefy for the lead.
+    Based on the score, suggest the most appropriate strategy for the lead.
     Integrate this information to outline how {company} and {product_name} can
     specifically benefit this lead.
 
@@ -67,10 +53,6 @@ scoring_and_planning_task:
     Short answers from leads are a yellow flag.
     Let's be a little pessimistic and focus the high scores on deals that are
     more likely to close and trully great.
-
-
-    Lead Form Responses:
-    {form_response}
 
 
     {product_name}:

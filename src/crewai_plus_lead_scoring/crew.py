@@ -2,18 +2,17 @@ from typing import List
 
 from crewai_tools import ScrapeWebsiteTool, SerperDevTool
 from pydantic import BaseModel, Field
-
-from crewai import Agent, Crew, Process, Task
+from crewai import Agent, Crew, Process, Task, LLM
 from crewai.project import CrewBase, agent, crew, task
+
+
 
 
 class LeadScore(BaseModel):
     lead_score: float = Field(..., description="The score of the lead between 0 - 10")
-    use_case_summary: str = Field(
-        ..., description="The summary of the use case of the lead"
+    use_case_summary: str = Field(description="The summary of the use case of the lead",
     )
     talking_points: List[str] = Field(
-        ...,
         description="The talking points and ideas for an email and call with the lead",
     )
 
@@ -25,6 +24,9 @@ class CrewaiPlusLeadScoringCrew:
     agents_config = "config/agents.yaml"
     tasks_config = "config/tasks.yaml"
 
+    def __init__(self, model: LLM):
+        self.model = model
+
     @agent
     def lead_analysis_agent(self) -> Agent:
         return Agent(
@@ -32,6 +34,7 @@ class CrewaiPlusLeadScoringCrew:
             tools=[SerperDevTool(), ScrapeWebsiteTool()],
             allow_delegation=False,
             verbose=True,
+            llm=self.model,
         )
 
     @agent
@@ -41,6 +44,7 @@ class CrewaiPlusLeadScoringCrew:
             tools=[SerperDevTool(), ScrapeWebsiteTool()],
             allow_delegation=False,
             verbose=True,
+            llm=self.model,
         )
 
     @agent
@@ -49,6 +53,7 @@ class CrewaiPlusLeadScoringCrew:
             config=self.agents_config["scoring_and_planning_agent"],
             tools=[SerperDevTool(), ScrapeWebsiteTool()],
             verbose=True,
+            llm = self.model,
         )
 
     @task
@@ -56,6 +61,8 @@ class CrewaiPlusLeadScoringCrew:
         return Task(
             config=self.tasks_config["lead_analysis_task"],
             agent=self.lead_analysis_agent(),
+            output_json=LeadScore,
+            output_json_path="lead_score.json",
         )
 
     @task
