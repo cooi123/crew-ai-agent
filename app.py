@@ -2,112 +2,87 @@
 import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
-import json
-import requests
-from flask import Flask, request, jsonify, Response
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-#from crewai_plus_lead_scoring.main import run
-#from crewai_customer_research.main import runAgent
+from crewai_plus_lead_scoring.main import run
+from crewai_customer_research.main import runAgent
+import uvicorn
+from src.models.lead_analysis_request import LeadAnalysisRequest
 from crewai_primer_maker.main import runAgentPrimer
-from flask_cors import CORS
+from crewai_primer_maker.crew import PrimerOutput
+from src.models.primer_request import PrimerRequest
+from crewai_customer_research.models.agent_input import AgentInput as EmailAgentInput
+from crewai_customer_research.models.email_output import FinalEmailOutput
+from sales_personalized_email.main import run as SalesPersonalizedEmailSAgentRun
+from sales_personalized_email.models import SalesAgentInputModel, PersonalizedEmail
 
 load_dotenv()
-app = Flask(__name__)
-#cors = CORS(app, resources={r"/*": {"origins": "*"}})
+app = FastAPI(title="Studio Agents")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
 
-# @app.route('/', methods=['GET'])
-# def default():
-#     return "Welcome to Studio Agents"
+@app.get("/")
+def default():
+    return "Welcome to Studio Agents"
 
-# @app.route('/lead/analysis', methods=['POST'])
-# def leadAnalysis():
-#     if not request.json:
-#         result = {'statusCode': 400,'message':'Invalid data provided'}
-#         return Response(
-#             response=json.dumps(result.json_dict, indent=2),
-#             status=400,
-#             mimetype='application/json'
-#         )
+@app.post("/lead/analysis")
+async def lead_analysis(request: LeadAnalysisRequest):
+    try:
+        user_inputs =  request.model_dump()
+        print(type(user_inputs))
+    except Exception as e:
+        print(e)
+        raise HTTPException(status_code=400, detail="Invalid data provided")
     
-#     #userInputs = request.json
-#     userInputs = {
-#         'topic': 'Banking'
-#     }
-#     runAgentPrimer().crew().kickoff(inputs=userInputs)
-#     result = runAgentPrimer(userInputs)
-
-#     headers = {
-#         "Content-Type": "application/json",
-#     }
-
-#     response = requests.post(userInputs["webhook_url"], headers=headers, data=json.dumps(result.json_dict, indent=2))
-
-#     return Response(
-#         response=json.dumps(result.json_dict, indent=2),
-#         status=response.status_code,
-#         mimetype='application/json'
-#     )
-
-# @app.route('/lead/createEmail', methods=['POST'])
-# def leadCreateEmail():
-#     if not request.json:
-#         result = {'statusCode': 400,'message':'Invalid data provided'}
-#         return Response(
-#             response=json.dumps(result.json_dict, indent=2),
-#             status=400,
-#             mimetype='application/json'
-#         )
-    
-#     userInputs = request.json
-
-#     result = runAgent(userInputs)
-
-#     # headers = {
-#     #     "Content-Type": "application/json",
-#     # }
-
-#     # response = requests.post(userInputs["webhook_url"], headers=headers, data=json.dumps(result.json_dict, indent=2))
-
-#     return Response(
-#         response=json.dumps(result.json_dict, indent=2),
-#         status=200,
-#         mimetype='application/json'
-#     )
-
-
-@app.route('/consultant/primer', methods=['POST'])
-def consultantCreatePrimer():
-    if not request.json:
-        result = {'statusCode': 400,'message':'Invalid data provided'}
-        return Response(
-            response=json.dumps(result.json_dict, indent=2),
-            status=400,
-            mimetype='application/json'
-        )
-    
-    userInputs = request.json
-    print(userInputs)
-    #userInputs = {"topic":"internet banking"}
-
-    result = runAgentPrimer(userInputs)
-    headers = {
-        "Content-Type": "application/json",
-    }
-    print("End Analysis")
-    print(result)
-    #response_data = {'result': result}
-    #return json.dumps(result.json_dict)
-
-    #response = requests.post(userInputs["webhook_url"], headers=headers, data=json.dumps(result.json_dict, indent=2))
+    result = run(user_inputs)
+    print(f"Result: {result.raw}")
 
     return Response(
-        response=json.dumps(result.json_dict, indent=2),
-        status=200,
-        mimetype='application/json'
-    )
+            content=result.raw,
+            media_type="text/markdown"
+        )
+
+@app.post("/lead/createEmail", response_model=FinalEmailOutput)
+async def lead_create_email(request: EmailAgentInput):
+    run = runAgent(request)
+    print(f"Result: {run.raw}")
+    return Response(
+            content=run.raw,
+            media_type="text/markdown"
+        )
+
+
+@app.post("/consultant/primer", response_model=PrimerOutput)
+async def consultantCreatePrimer(request: PrimerRequest):
+    print(f"Request: {request}")
+    result = runAgentPrimer({"topic": request.topic})
+    
+    return result.json_dict
+
+@app.post("/sales/personalizedEmail", response_model=PersonalizedEmail)
+async def sales_personalized_email(input: SalesAgentInputModel):
+    """
+    Run the crew.
+    """
+    result = SalesPersonalizedEmailSAgentRun(input)
+    # return result.json_dict
+    return {
+        "subject_line": result.subject_line,
+        "email_body": result.email_body,
+        "follow_up_notes": result.follow_up_notes,
+    }
+    
+
+
 
 if __name__ == '__main__':
-    app.run(host="localhost", port=os.environ.get("PORT",8000), debug=True)
-    #app.run(host="localhost", port=8001, debug=True)
-
-    
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("app:app", host="localhost", port=port, reload=True)
+    print("Server started on port", port)
