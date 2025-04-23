@@ -1,0 +1,18 @@
+primer_analyst_task:
+  description: >
+    1. Conduct thorough web research on the topic: '{topic}'.
+      2. Identify key concepts, current status/trends, major players or technologies involved, primary benefits, and significant challenges or risks.
+      3. Synthesize the gathered information into a concise primer document.
+      4. Structure the primer logically, potentially using sections like:
+         - Introduction / What is {topic}?
+         - Key Concepts & How it Works
+         - Current Landscape & Trends
+         - Major Players / Technologies (if applicable)
+         - Benefits & Advantages
+         - Challenges & Risks
+         - Future Outlook / Conclusion
+      5. Ensure the entire document is written clearly and concisely, suitable for a consultant to read and understand within approximately 15 minutes (target length: ~750-1000 words).
+      6. Format the output as a well-structured Markdown document.
+  expected_output: >
+    A concise, well-structured primer document on '{topic}' in Markdown format.
+    The document should be approximately 750-1000 words, covering the key aspects identified in the description, and tailored for a consultant's quick understanding.
