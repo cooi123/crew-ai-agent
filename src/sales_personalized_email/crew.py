@@ -99,7 +99,7 @@ class SalesPersonalizedEmailCrew:
         return Task(
             config=self.tasks_config["review_email_task"],
             agent=self.email_editor(),
-            output_json=PersonalizedEmail,
+            output_pydantic=PersonalizedEmail,
             output_file="personalized_email.md",
             tools=[self.directory_read_tool, FileReadTool()],
         )

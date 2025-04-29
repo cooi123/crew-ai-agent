@@ -16,7 +16,7 @@ def run(input: SalesAgentInputModel) -> PersonalizedEmail:
     """
     input_dict = input.model_dump()
 
-    return SalesPersonalizedEmailCrew().crew().kickoff(inputs=input_dict)
+    return SalesPersonalizedEmailCrew().crew().kickoff(inputs=input_dict).pydantic
 
 
 def train():
