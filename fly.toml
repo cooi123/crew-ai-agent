@@ -1,22 +1,30 @@
-# fly.toml app configuration file generated for linkedin-crew on 2025-04-23T09:43:39+10:00
-#
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
-#
-
-app = 'linkedin-crew'
+app = 'ibm-project-broken-wind-6280'
 primary_region = 'syd'
 
 [build]
 
+[processes]
+  app = "/app/.venv/bin/python app.py"
+  worker = "/app/.venv/bin/python worker.py"
+
 [http_service]
-  internal_port = 8080
+  internal_port = 8000
   force_https = true
   auto_stop_machines = 'stop'
   auto_start_machines = true
   min_machines_running = 0
-  processes = ['app']
+  processes = ['app']  # Only the app process serves HTTP
 
 [[vm]]
+  size = 'shared-cpu-1x'
   memory = '1gb'
   cpu_kind = 'shared'
   cpus = 1
+  processes = ["app"]  # This VM runs the app
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '1gb'
+  cpu_kind = 'shared'
+  cpus = 1
+  processes = ["worker"]  # This VM runs the worker

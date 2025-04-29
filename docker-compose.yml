@@ -1,0 +1,27 @@
+services:
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+  
+  # api:
+  #   build: .
+  #   ports:
+  #     - "8000:8000"
+  #   environment:
+  #     - REDIS_URL=redis://redis:6379/0
+  #     - CELERY_BROKER_URL=redis://redis:6379/0
+  #     - CELERY_RESULT_BACKEND=redis://redis:6379/0
+  #   depends_on:
+  #     - redis
+  #   command: /app/.venv/bin/python app.py
+  
+  # worker:
+  #   build: .
+  #   environment:
+  #     - REDIS_URL=redis://redis:6379/0
+  #     - CELERY_BROKER_URL=redis://redis:6379/0
+  #     - CELERY_RESULT_BACKEND=redis://redis:6379/0
+  #   depends_on:
+  #     - redis
+  #   command: /app/.venv/bin/python worker.py

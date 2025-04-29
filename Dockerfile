@@ -1,26 +1,14 @@
-FROM python:3.11 AS builder
+FROM python:3.12-slim
 
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+# Install uv.
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+# Copy the application into the container.
+COPY . /app
+
+# Install the application dependencies.
 WORKDIR /app
+RUN uv sync --frozen --no-cache
 
-RUN python -m venv .venv
-
-COPY pyproject.toml .
-COPY src/ ./src/
-COPY app.py .
-
-# Install using editable mode to support src layout
-RUN .venv/bin/pip install --upgrade pip
-RUN .venv/bin/pip install -e .
-
-FROM python:3.11
-WORKDIR /app
-
-COPY --from=builder /app/.venv .venv/
-COPY . .
-
-# Ensure the Flask app can find packages under src/
-ENV PYTHONPATH=/app/src
-
-CMD ["/app/.venv/bin/flask", "run", "--host=0.0.0.0", "--port=8000"]
+# Run the application.
+CMD ["/app/.venv/bin/fastapi", "run", "app.py", "--port", "8000", "--host", "0.0.0.0"]
