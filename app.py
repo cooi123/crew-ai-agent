@@ -9,14 +9,23 @@ from dotenv import load_dotenv
 from crewai_plus_lead_scoring.main import run
 from crewai_customer_research.main import runAgent
 import uvicorn
-from src.models.lead_analysis_request import LeadAnalysisRequest
-from crewai_primer_maker.main import runAgentPrimer
-from crewai_primer_maker.crew import PrimerOutput
-from src.models.primer_request import PrimerRequest
-from crewai_customer_research.models.agent_input import AgentInput as EmailAgentInput
-from crewai_customer_research.models.email_output import FinalEmailOutput
-from sales_personalized_email.main import run as SalesPersonalizedEmailSAgentRun
-from sales_personalized_email.models import SalesAgentInputModel, PersonalizedEmail
+from pydantic import BaseModel
+from src.tasks.celery_tasks import create_consultant_primer, create_personalized_email
+from src.crewai_primer_maker.model.primer_request import PrimerRequest
+from src.sales_personalized_email.crew import SalesPersonalizedEmailCrew
+from src.sales_personalized_email.models import SalesAgentInputModel
+from typing import Optional
+from celery.result import AsyncResult
+
+class TextInputRequest(BaseModel):
+    """Model for raw text input"""
+    raw_text: str
+
+class TaskResponse(BaseModel):
+    """Response for asynchronous tasks"""
+    task_id: str
+    status: str
+    message: str
 
 load_dotenv()
 app = FastAPI(title="Studio Agents")
@@ -32,53 +41,68 @@ app.add_middleware(
 def default():
     return "Welcome to Studio Agents"
 
-@app.post("/lead/analysis")
-async def lead_analysis(request: LeadAnalysisRequest):
-    try:
-        user_inputs =  request.model_dump()
-        print(type(user_inputs))
-    except Exception as e:
-        print(e)
-        raise HTTPException(status_code=400, detail="Invalid data provided")
-    
-    result = run(user_inputs)
-    print(f"Result: {result.raw}")
 
-    return Response(
-            content=result.raw,
-            media_type="text/markdown"
-        )
-
-@app.post("/lead/createEmail", response_model=FinalEmailOutput)
-async def lead_create_email(request: EmailAgentInput):
-    run = runAgent(request)
-    print(f"Result: {run.raw}")
-    return Response(
-            content=run.raw,
-            media_type="text/markdown"
-        )
-
-
-@app.post("/consultant/primer", response_model=PrimerOutput)
+@app.post("/consultant/primer", response_model=TaskResponse)
 async def consultantCreatePrimer(request: PrimerRequest):
     print(f"Request: {request}")
-    result = runAgentPrimer({"topic": request.topic})
+    task = create_consultant_primer.delay({"topic": request.topic})
     
-    return result.json_dict
+    return TaskResponse(
+        task_id=task.id,
+        status="PENDING",
+        message="Primer generation has been started"
+    )
 
-@app.post("/sales/personalizedEmail", response_model=PersonalizedEmail)
-async def sales_personalized_email(input: SalesAgentInputModel):
+@app.post("/sales/personalizedEmail", response_model=TaskResponse)
+async def sales_personalized_email(text_input: Optional[TextInputRequest] = None, structured_input: Optional[SalesAgentInputModel] = None):
     """
-    Run the crew.
+    Run the crew asynchronously
     """
-    result = SalesPersonalizedEmailSAgentRun(input)
-    result = result.model_dump()
-    return {
-        "subject_line": result.get("subject_line", ""),
-        "email_body": result.get("email_body", ""),
-        "follow_up_notes": result.get("follow_up_notes", ""),
-    }
+    if text_input is None and structured_input is None:
+        raise HTTPException(status_code=400, detail="Either text_input or structured_input must be provided")
     
+    # Prepare data for task
+    if text_input:
+        task_data = {"raw_text": text_input.raw_text}
+    else:
+        task_data = {"structured_data": structured_input.model_dump()}
+    
+    # Submit task to Celery
+    task = create_personalized_email.delay(task_data)
+    
+    return TaskResponse(
+        task_id=task.id,
+        status="PENDING",
+        message="Email generation has been queued"
+    )
+    
+@app.get("/task/status/{task_id}", response_model=TaskResponse)
+def get_task_status(task_id: str):
+    """
+    Get the status of a task
+    """
+    res = AsyncResult(task_id)
+    if res.state == 'PENDING':
+        return TaskResponse(
+            task_id=res.id,
+            status=res.state,
+            message="Task is pending"
+        )
+    elif res.state == 'SUCCESS':
+        return TaskResponse(
+            task_id=res.id,
+            status=res.state,
+            message="Task completed successfully",
+        )
+    elif res.state == 'FAILURE':
+        return TaskResponse(
+            task_id=res.id,
+            status=res.state,
+            message="Task failed",
+        )
+    else:
+        raise HTTPException(status_code=400, detail="Unknown task state")
+
 
 
 
