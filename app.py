@@ -72,11 +72,11 @@ async def sales_personalized_email(input: SalesAgentInputModel):
     Run the crew.
     """
     result = SalesPersonalizedEmailSAgentRun(input)
-    # return result.json_dict
+    result = result.model_dump()
     return {
-        "subject_line": result.subject_line,
-        "email_body": result.email_body,
-        "follow_up_notes": result.follow_up_notes,
+        "subject_line": result.get("subject_line", ""),
+        "email_body": result.get("email_body", ""),
+        "follow_up_notes": result.get("follow_up_notes", ""),
     }
     
 

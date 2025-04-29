@@ -9,4 +9,3 @@ class AgentInputModel(BaseModel):
     our_product: str
     product_url:str
     my_profile:str
-    platform:str

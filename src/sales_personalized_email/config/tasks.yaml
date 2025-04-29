@@ -38,7 +38,7 @@ personalize_content_task:
 
 write_email_task:
   description: >
-    Craft a highly personalized outreach message (suitable for {platform}) to {name} about {our_product}.
+    Craft a highly personalized outreach message (suitable for linkedin) to {name} about {our_product}.
     Use research and personalized content to make the message feel individual, relevant, and engaging. Leverage the sender's role and goal ({my_profile}) to shape the message, emphasize a consultative, value-realization perspective.
     The message must demonstrate understanding of their role/company challenges. 
     Start with a strong, specific hook (e.g., referencing a recent talk like the XI Forum example, specific company news, a shared connection) to capture immediate attention. 
@@ -62,7 +62,7 @@ review_email_task:
     Ensure the message clearly reflects the sender's role ({my_profile}) - if CSM, check for a consultative/value-focused tone, not just a sales pitch. Provide constructive feedback for improvement.
   expected_output: >
     A polished version of the outreach message. Include specific feedback notes on:
-    Hook Effectiveness: How compelling and personalized is the opening?
+    Hook Effectiveness: How compelling and personalized is the opening?s
     Conciseness & Length: Is it appropriately brief, especially for LinkedIn?
     Platform Suitability: Does the format, tone, and structure match the intended platform (LinkedIn vs. Email)?
     Tone & Role Alignment: Does the message reflect the sender's role ({my_profile}) accurately?
