@@ -1,0 +1,2 @@
+from sales_personalized_email.models.email_model import PersonalizedEmail
+from sales_personalized_email.models.agent_input_model import AgentInputModel as SalesAgentInputModel

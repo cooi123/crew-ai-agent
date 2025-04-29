@@ -1,0 +1,14 @@
+process_text_task:
+  description: >
+    Analyze the provided text and extract the following information:
+    
+    {schema}
+    
+    If any field is not explicitly mentioned, make a reasonable inference based on context.
+    For missing fields that cannot be inferred, use empty strings.
+    
+    Format your response as a valid JSON object with all the required fields.
+    
+    Original text to analyze: {raw_text}
+  expected_output: >
+    A valid JSON object containing all required fields for the SalesAgentInputModel.
