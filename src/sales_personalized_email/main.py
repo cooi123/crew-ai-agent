@@ -10,7 +10,7 @@ from sales_personalized_email.models import (SalesAgentInputModel, PersonalizedE
 # interpolate any tasks and agents information
 
 
-def run(input: SalesAgentInputModel) -> PersonalizedEmail:
+def run(input: SalesAgentInputModel, **kargs) -> PersonalizedEmail:
     """
     Run the crew.
     """

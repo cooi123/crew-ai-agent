@@ -2,30 +2,23 @@
 import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
-from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-from crewai_plus_lead_scoring.main import run
-from crewai_customer_research.main import runAgent
 import uvicorn
 from pydantic import BaseModel
-from src.tasks.celery_tasks import create_consultant_primer, create_personalized_email
-from src.crewai_primer_maker.model.primer_request import PrimerRequest
-from src.sales_personalized_email.crew import SalesPersonalizedEmailCrew
-from src.sales_personalized_email.models import SalesAgentInputModel
 from typing import Optional
 from celery.result import AsyncResult
-
-class TextInputRequest(BaseModel):
-    """Model for raw text input"""
-    raw_text: str
+from src.models.base_models import BaseServiceRequest
+from urllib.parse import urlparse
+from src.tasks.celery_tasks import create_consultant_primer, create_personalized_email
 
 class TaskResponse(BaseModel):
     """Response for asynchronous tasks"""
     task_id: str
     status: str
     message: str
+    result: Optional[dict] = None
 
 load_dotenv()
 app = FastAPI(title="Studio Agents")
@@ -41,72 +34,65 @@ app.add_middleware(
 def default():
     return "Welcome to Studio Agents"
 
+service_endpoints = {
+        "primer": "/primer",
+        "email": "/personalizedEmail",
+    }
 
-@app.post("/consultant/primer", response_model=TaskResponse)
-async def consultantCreatePrimer(request: PrimerRequest):
-    print(f"Request: {request}")
-    task = create_consultant_primer.delay({"topic": request.topic})
-    
-    return TaskResponse(
-        task_id=task.id,
-        status="PENDING",
-        message="Primer generation has been started"
-    )
+@app.post("/service/run", response_model=TaskResponse)
+async def run_service(
+    request: BaseServiceRequest,
+):
+    """Universal endpoint to run any service based on service_id"""
 
-@app.post("/sales/personalizedEmail", response_model=TaskResponse)
-async def sales_personalized_email(text_input: Optional[TextInputRequest] = None, structured_input: Optional[SalesAgentInputModel] = None):
-    """
-    Run the crew asynchronously
-    """
-    if text_input is None and structured_input is None:
-        raise HTTPException(status_code=400, detail="Either text_input or structured_input must be provided")
-    
-    # Prepare data for task
-    if text_input:
-        task_data = {"raw_text": text_input.raw_text}
+    matching_service= None
+    if (request.serviceUrl ):
+        parsed_url = urlparse(request.serviceUrl)
+        path = parsed_url.path
+        for service, endpoint in service_endpoints.items():
+            if path.endswith(endpoint):
+                matching_service = service
+                break
+        else:
+            raise HTTPException(status_code=400, detail="Invalid service URL")
+    # need to determine which service to run based on service_id
+    if matching_service == "primer":
+        task_id = create_consultant_primer.delay(request.model_dump())
+    elif matching_service == "email":
+        task_id = create_personalized_email.delay(request.model_dump())
     else:
-        task_data = {"structured_data": structured_input.model_dump()}
-    
-    # Submit task to Celery
-    task = create_personalized_email.delay(task_data)
-    
-    return TaskResponse(
-        task_id=task.id,
-        status="PENDING",
-        message="Email generation has been queued"
-    )
-    
-@app.get("/task/status/{task_id}", response_model=TaskResponse)
+        #do a http request to the service_url
+        
+        pass
+    return {
+        "task_id": task_id.id,
+        "status": "pending",
+        "message": "Task is pending"
+    }
+
+
 def get_task_status(task_id: str):
-    """
-    Get the status of a task
-    """
-    res = AsyncResult(task_id)
-    if res.state == 'PENDING':
-        return TaskResponse(
-            task_id=res.id,
-            status=res.state,
-            message="Task is pending"
-        )
-    elif res.state == 'SUCCESS':
-        return TaskResponse(
-            task_id=res.id,
-            status=res.state,
-            message="Task completed successfully",
-        )
-    elif res.state == 'FAILURE':
-        return TaskResponse(
-            task_id=res.id,
-            status=res.state,
-            message="Task failed",
-        )
+    """Get the status of a task"""
+    result = AsyncResult(task_id)
+    if result.state == 'PENDING':
+        return {"status": "pending", "message": "Task is pending"}
+    elif result.state == 'SUCCES S':
+        return {"status": "success", "message": "Task completed successfully", "result": result.result}
+    elif result.state == 'FAILURE':
+        return {"status": "failure", "message": str(result.info)}
     else:
-        raise HTTPException(status_code=400, detail="Unknown task state")
+        return {"status": result.state, "message": str(result.info)}
+    
 
+
+# async def register_service(){
+
+
+# }
 
 
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 8000))
-    uvicorn.run("app:app", host="localhost", port=port, reload=True)
+    uvicorn.run("app:app", host="0.0.0.0", port=port, workers=1, log_level="info", reload=False)
     print("Server started on port", port)
