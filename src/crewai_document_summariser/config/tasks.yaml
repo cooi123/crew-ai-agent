@@ -1,0 +1,10 @@
+process_text_task:
+  description: >
+    Ingestion: Receives a document (e.g., PDF, DOCX, TXT, webpage content) {document} and a specific query from the user detailing the insight they want to gain {insight}.
+    Understanding Query: Analyzes the user's query to identify the core information need and keywords.
+    RAG - Retrieval: Use the RAG tool to breaks down the document into manageable chunks. 
+    Uses the user's query to search within the document chunks and retrieve the most relevant passages or snippets of text that directly address the desired insight.
+    RAG - Generation: Instructs the LLM to synthesize an answer strictly based on the provided context (the retrieved snippets), focusing only on the user's requested insight.
+    Formatting: Structures the generated synthesis into concise, easy-to-read bullet points.
+  expected_output: >
+    A short list of doted points summarizing the key information extracted from the text.
