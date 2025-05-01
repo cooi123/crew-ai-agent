@@ -10,7 +10,6 @@ class BaseServiceRequest(BaseModel):
     """Base model for all request models with common fields"""
     projectId: Optional[Union[str, UUID]] = Field(default=None, description="UUID of the project")
     userId: Union[str, UUID] = Field(..., description="UUID of the user")
-    documentId: Optional[Union[str, UUID]] = Field(default=None, description="UUID of the document")
     documentIds: Optional[list[Union[str, UUID]]] = Field(default=None, description="List of document UUIDs")
     documentUrls: Optional[list[str]] = Field(default=None, description="List of document URLs")
     serviceId: Union[str, UUID] = Field(..., description="UUID of the service")

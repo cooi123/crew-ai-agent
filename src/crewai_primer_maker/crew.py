@@ -6,10 +6,7 @@ from crewai_tools import ScrapeWebsiteTool, SerperDevTool
 
 
 
-# Define the final formatted email output
-class PrimerOutput(BaseModel):
-    subject: str = Field(..., description="Formatted primer text")
-    body: str = Field(..., description="Formatted body of the primer")
+
 
 
 @CrewBase
@@ -35,7 +32,6 @@ class PrimerCrew:
         return Task(
             config=self.tasks_config["primer_analyst_task"],
             agent=self.topic_researcher_writer_agent(),
-            output_json=PrimerOutput,  # Defines output as JSON
 
         )
 

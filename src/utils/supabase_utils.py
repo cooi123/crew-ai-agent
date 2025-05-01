@@ -4,6 +4,7 @@ from supabase import create_client, Client
 from datetime import datetime
 import json
 from typing import Optional, Dict, Any, Union
+from src.models.base_models import BaseServiceRequest
 load_dotenv()
 
 # Get Supabase credentials
@@ -13,7 +14,7 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 # Initialize Supabase client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-def create_transaction(task_id, service_id, user_id, args, project_id=None, document_id=None, document_url=None, service_url=None, auth_token=None):
+def create_transaction(task_id, request:BaseServiceRequest ):
     """
     Create a new transaction record in Supabase
     
@@ -21,7 +22,7 @@ def create_transaction(task_id, service_id, user_id, args, project_id=None, docu
     - task_id: Unique identifier for the task/transaction
     - service_id: ID of the service being used
     - user_id: ID of the user making the request
-    - args: The input data (will be stored as custom_input)
+    - custom_input: Custom input provided by the user
     - project_id: ID of the project (optional)
     - document_id: ID of the document being processed (optional)
     - document_url: URL to the document (optional)
@@ -33,13 +34,13 @@ def create_transaction(task_id, service_id, user_id, args, project_id=None, docu
         # Create transaction data with snake_case field names to match DB schema
         transaction_data = {
             'id': task_id,
-            'service_id': service_id,
-            'user_id': user_id,
-            'project_id': project_id,
-            'document_id': document_id,
-            'document_url': document_url,
-            'service_url': service_url,
-            'custom_input': args,
+            'service_id': request.get('serviceId'),
+            'user_id': request.get('userId'),
+            'custom_input': request.get('customInput'),
+            'project_id': request.get('projectId'),
+            'document_id': None,
+            'document_url': request.get('documentUrls'),
+            'service_url': request.get('serviceUrl'),
             'created_at': datetime.now().isoformat(),
             'status': 'STARTED'  # Adding status field for tracking
         }
