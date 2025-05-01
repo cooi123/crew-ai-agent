@@ -11,7 +11,7 @@ from typing import Optional
 from celery.result import AsyncResult
 from src.models.base_models import BaseServiceRequest
 from urllib.parse import urlparse
-from src.tasks.celery_tasks import create_consultant_primer, create_personalized_email
+from src.tasks.celery_tasks import create_consultant_primer, create_personalized_email, create_embed_documents, create_summariser_task
 
 class TaskResponse(BaseModel):
     """Response for asynchronous tasks"""
@@ -37,6 +37,7 @@ def default():
 service_endpoints = {
         "primer": "/primer",
         "email": "/personalizedEmail",
+        "summariser": "/summariser",
     }
 
 @app.post("/service/run", response_model=TaskResponse)
@@ -44,9 +45,9 @@ async def run_service(
     request: BaseServiceRequest,
 ):
     """Universal endpoint to run any service based on service_id"""
-
-    matching_service= None
-    if (request.serviceUrl ):
+    print(f"Request received: {request}")
+    matching_service = None
+    if request.serviceUrl:
         parsed_url = urlparse(request.serviceUrl)
         path = parsed_url.path
         for service, endpoint in service_endpoints.items():
@@ -55,17 +56,44 @@ async def run_service(
                 break
         else:
             raise HTTPException(status_code=400, detail="Invalid service URL")
-    # need to determine which service to run based on service_id
-    if matching_service == "primer":
-        task_id = create_consultant_primer.delay(request.model_dump())
-    elif matching_service == "email":
-        task_id = create_personalized_email.delay(request.model_dump())
+    
+    # Create a chain of tasks if we have documents to embed
+    if len(request.documentUrls) > 0:
+        print("Embedding documents")
+        # Create task chain based on the service
+        if matching_service == "primer":
+            chain = create_embed_documents.s(request.model_dump()) | create_consultant_primer.s()
+            task_result = chain()
+            task_id = task_result.id
+        elif matching_service == "email":
+            chain = create_embed_documents.s(request.model_dump()) | create_personalized_email.s()
+            task_result = chain()
+            task_id = task_result.id
+        elif matching_service == "summariser":
+            chain = create_embed_documents.s(request.model_dump()) | create_summariser_task.s()
+            task_result = chain()
+            task_id = task_result.id
+        else:
+            # Just embed documents if no matching service or for other purposes
+            task_result = create_embed_documents.delay(request.model_dump())
+            task_id = task_result.id
     else:
-        #do a http request to the service_url
-        
-        pass
+        # No documents to embed, directly call the service task
+        if matching_service == "primer":
+            task_result = create_consultant_primer.delay(request.model_dump())
+            task_id = task_result.id
+        elif matching_service == "email":
+            task_result = create_personalized_email.delay(request.model_dump())
+            task_id = task_result.id
+        elif matching_service == "summariser":
+            task_result = create_summariser_task.delay(request.model_dump())
+            task_id = task_result.id
+        else:
+            # Handle the case when no matching service is found
+            raise HTTPException(status_code=400, detail="No valid service specified")
+    
     return {
-        "task_id": task_id.id,
+        "task_id": task_id,
         "status": "pending",
         "message": "Task is pending"
     }
