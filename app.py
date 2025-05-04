@@ -98,13 +98,13 @@ async def run_service(
         "message": "Task is pending"
     }
 
-
+@app.get("/tasks/{task_id}", response_model=TaskResponse)
 def get_task_status(task_id: str):
     """Get the status of a task"""
     result = AsyncResult(task_id)
     if result.state == 'PENDING':
         return {"status": "pending", "message": "Task is pending"}
-    elif result.state == 'SUCCES S':
+    elif result.state == 'SUCCESS': 
         return {"status": "success", "message": "Task completed successfully", "result": result.result}
     elif result.state == 'FAILURE':
         return {"status": "failure", "message": str(result.info)}
