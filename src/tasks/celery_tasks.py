@@ -1,274 +1,373 @@
-from src.configs.celery_config import celery_app
-from crewai_primer_maker.main import runAgentPrimer
-from sales_personalized_email.main import run as SalesPersonalizedEmailSAgentRun
-from sales_personalized_email.models import SalesAgentInputModel
-from text_to_schema.crew import SchemaProcessorCrew
-from typing import Dict, Any, Optional
-from src.utils.supabase_utils import create_transaction, update_transaction_status
-from src.models.base_models import BaseServiceRequest
-from src.utils.file_processsing import get_file_from_url, chuncker
-from src.crewai_document_summariser.main import runSummarizerAgent
-from src.crewai_document_summariser.models.document_summariser_input import DocumentSummariserInputModel
-from src.utils.astradb_utils import create_astra_collection, initialize_astra_client, upload_documents_to_astra
+from celery import shared_task
+from typing import Dict, Any, Optional, List, Callable, TypeVar, Generic, Type
+import time
+import psutil
+from functools import wraps
+from src.utils.supabase_utils import (
+    create_transaction, update_transaction_status, create_subtask,
+    get_transaction, get_subtasks
+)
+from src.models.task_models import (
+    TaskStatus, ResourceType, TaskType, UsageMetrics, TaskResult,
+    CeleryTaskRequest
+)
+from src.models.base_models import TextInput
+from src.agents import runAgentPrimer, runSalesPersonalizedEmail, runAgentTextToSchema
+from src.agents.crewai_sales_personalized_email.models import SalesAgentInputModel
+from src.utils.file_processsing import get_file_from_url, chuncker, embed_documents_local
+from src.utils.astradb_utils import astra_client, create_astra_collection, upload_documents_to_astra, delete_astra_collection
+from src.utils.shared import generate_collection_name
 import os
-REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+from dotenv import load_dotenv
+from src.utils.shared import generate_collection_name
+load_dotenv()
 
-@celery_app.task(name="tasks.create_consultant_primer", bind=True, task_started=True)
-def create_consultant_primer(self, request: Dict[str, Any]):
-    """
-    Create a consultant primer document asynchronously
-    """
-    task_id = self.request.id
-    create_transaction(
-        task_id=task_id,
-        request=request,
-
-    )
-    self.update_state(state='PROCESSING', meta={'status': 'Starting primer generation'})
-    update_transaction_status(task_id, "PROCESSING")
-    try:
-        # Run the primer maker agent
-        result = runAgentPrimer({"topic": request.get("customInput")})
-        print("updaiting transaction status")
-        update_transaction_status(task_id, "SUCCESS", result=result.model_dump_json())
-
-        return {
-            "task_id": task_id,
-            "status": "SUCCESS",
-            "result": result.json_dict
-        }
-    except Exception as e:
-        self.update_state(
-            state='FAILURE',
-            meta={
-                'status': 'Task failed',
-                'error': str(e),
-                'task_id': task_id
-            }
-        )
-        update_transaction_status(task_id, "FAILURE", error_message=str(e))
-        raise
-
-@celery_app.task(name="tasks.create_personalized_email", bind=True, task_started=True)
-def create_personalized_email(self, requestData: Dict[str, Any]):
-    """
-    Create a personalized sales email asynchronously
-    """
-    task_id = self.request.id
-    create_transaction(
-        task_id=task_id,
-        request=requestData
-    )
+def track_usage_metrics(start_time: float, resource_type: ResourceType = ResourceType.LLM) -> UsageMetrics:
+    """Track usage metrics for a task"""
+    end_time = time.time()
+    runtime_ms = int((end_time - start_time) * 1000)
     
-    self.update_state(state='PROCESSING', meta={'status': 'Starting email generation', 'progress': 10})
-    update_transaction_status(task_id, "PROCESSING")
-    try:
-        self.update_state(
-                state='PROCESSING', 
-                meta={'status': 'Converting text to structured data', 'progress': 30}
-            )
+    # Get memory usage
+    process = psutil.Process()
+    memory_info = process.memory_info()
+    
+    return UsageMetrics(
+        runtime_ms=runtime_ms,
+        resource_type=resource_type,
+        resources_used={
+            "memory_rss": memory_info.rss,
+            "memory_vms": memory_info.vms,
+            "cpu_percent": process.cpu_percent()
+        }
+    )
+
+def with_transaction_tracking(task_func: Callable[..., TaskResult]) -> Callable[..., CeleryTaskRequest]:
+    """
+    Higher-order function to wrap agent tasks with consistent transaction handling.
+    
+    This wrapper ensures:
+    1. Proper transaction creation
+    2. Status updates at each stage
+    3. Usage metrics tracking
+    4. Error handling
+    5. Parent task status synchronization
+    6. Proper type handling for chaining
+    """
+    @wraps(task_func)
+    def wrapper(self, request: Dict[str, Any], *args, **kwargs) -> CeleryTaskRequest:
+        start_time = time.time()
+        task_id = None
+        
+        try:
+            # Parse and validate request
+            task_request = CeleryTaskRequest(**request)
             
-            # Process through schema processor
-        schema_output = SchemaProcessorCrew(SalesAgentInputModel).run(requestData["customInput"])
-        # Update progress
-        self.update_state(
-            state='PROCESSING', 
-            meta={'status': 'Generating personalized email', 'progress': 50}
-        )
-        
-        # Generate the email
-        result = SalesPersonalizedEmailSAgentRun(schema_output)
-        
-        # Convert to dict for serialization
-        result_dict = result.model_dump() if hasattr(result, 'model_dump') else result
-        update_transaction_status(task_id, "SUCCESS", result=result_dict)
-        return {
-            "task_id": task_id,
-            "status": "SUCCESS",
-            "result": result_dict
-        }
-    except Exception as e:
-        self.update_state(
-            state='FAILURE',
-            meta={
-                'status': 'Task failed',
-                'error': str(e),
-                'task_id': task_id
-            }
-        )
-        update_transaction_status(task_id, "FAILURE", error_message=str(e))
-        raise
-
-@celery_app.task(name="tasks.create_summariser_task", bind=True, task_started=True)
-def create_summariser_task(self, request: Dict[str, Any]):
-    """
-    Create a summariser task asynchronously
-    """
-    task_id = self.request.id
-    create_transaction(
-        task_id=task_id,
-        request=request
-    )
-    
-    self.update_state(state='PROCESSING', meta={'status': 'Starting summarisation'})
-    update_transaction_status(task_id, "PROCESSING")
-    try:
-        schema_output= SchemaProcessorCrew(DocumentSummariserInputModel).run(request)
-        self.update_state(
-            state='PROCESSING', 
-            meta={'status': 'Generating summary', 'progress': 50}
-        )
-        print(f"Schema output: {schema_output}")
-
-        result = runSummarizerAgent(schema_output)
-        result_dict = result.model_dump() if hasattr(result, 'model_dump') else result
-        update_transaction_status(task_id, "SUCCESS", result=result_dict)
-        return {
-            "task_id": task_id,
-            "status": "SUCCESS",
-            "result": result_dict
-        }
-    except Exception as e:
-        self.update_state(
-            state='FAILURE',
-            meta={
-                'status': 'Task failed',
-                'error': str(e),
-                'task_id': task_id
-            }
-        )
-        update_transaction_status(task_id, "FAILURE", result=str(e))
-        raise
-
-
-@celery_app.task(name="tasks.embed_documents", bind=True, task_started=True)
-def create_embed_documents(self, request: Dict[str, Any]):
-    
-    """
-    To do - need to fix multiprocesssing issues with embedding
-    Embed documents asynchronously with improved memory management
-    """
-    print("Running embed_documents task")
-    task_id = self.request.id
-    
-    # Get basic info from request
-    project_id = request.get("projectId")
-    service_id = request.get("serviceId")
-    user_id = request.get("userId")
-    
-    create_transaction(
-        task_id=task_id,
-        request=request
-    )
-
-    self.update_state(state='PROCESSING', meta={'status': 'Starting embedding generation'})
-    update_transaction_status(task_id, "PROCESSING")
-    
-    document_urls = request.get("documentUrls")
-    if not document_urls:
-        self.update_state(
-            state='FAILURE',
-            meta={
-                'status': 'Task failed',
-                'error': 'No document URLs provided',
-                'task_id': task_id
-            }
-        )
-        update_transaction_status(task_id, "FAILURE", error_message="No document URLs provided")
-        return {
-            "task_id": task_id,
-            "status": "FAILURE",
-            "error": "No document URLs provided"
-        }
-    
-    try:
-        # Process URLs in small batches to avoid memory issues
-        all_docs = []
-        total_urls = len(document_urls)
-        
-        for i, url in enumerate(document_urls):
-            self.update_state(
-                state='PROCESSING', 
-                meta={
-                    'status': f'Loading document {i+1}/{total_urls}', 
-                    'progress': int(10 + (i/total_urls) * 20)
-                }
-            )
+            # Get task description from docstring
+            task_description = task_func.__doc__.strip() if task_func.__doc__ else "No description available"
             
+            # Create transaction
+            if not task_request.parent_transaction_id:
+                # Main task
+                transaction = create_transaction(
+                    request=task_request,
+                    task_id=self.request.id,
+                    description=task_description
+                )
+            else:
+                # Subtask
+                transaction = create_subtask(
+                    parent_task_id=task_request.parent_transaction_id,
+                    request=task_request,
+                    task_id=self.request.id,
+                    task_type=TaskType.SUBTASK,
+                    description=task_description
+                )
+                
+            if not transaction:
+                raise Exception("Failed to create transaction")
+            task_id = transaction['id']
+            
+            # Update task state to running
+            self.update_state(state='PROCESSING', meta={'status': 'Running task...'})
+            update_transaction_status(task_id, TaskStatus.RUNNING)
+            
+            # Execute the actual task
             try:
-                docs = get_file_from_url(url)
-                
-                # Add source metadata to documents
-                if isinstance(docs, list):
-                    for idx, doc in enumerate(docs):
-                        if hasattr(doc, 'metadata'):
-                            doc.metadata['source_url'] = url
-                            doc.metadata['source_index'] = f"doc_{i}_{idx}"
-                    all_docs.extend(docs)
-                else:
-                    if hasattr(docs, 'metadata'):
-                        docs.metadata['source_url'] = url
-                        docs.metadata['source_index'] = f"doc_{i}_0"
-                    all_docs.append(docs)
-                    
-                
-            except Exception as doc_error:
-                print(f"Error processing URL {url}: {doc_error}")
-                # Continue with other documents rather than failing the entire task
-        
-        # Check if we have any valid documents
-        if not all_docs:
-            raise ValueError("Could not process any documents from the provided URLs")
-        
-        total_docs = len(all_docs)
-        self.update_state(
-            state='PROCESSING', 
-            meta={'status': f'Preparing to embed {total_docs} documents', 'progress': 30}
-        )
+                print("running task")
+                result: TaskResult = task_func(self, task_request, *args, **kwargs)
+                print("result", result)
+            except Exception as e:
+                update_transaction_status(task_id, TaskStatus.FAILED, error_message=str(e))
+                raise e
+            
+            # Track usage metrics
+            usage_metrics = track_usage_metrics(start_time)
+            
+            # Update final status
+            update_transaction_status(
+                task_id,
+                TaskStatus.COMPLETED,
+                result_payload=result.result_payload,
+                computation_usage=usage_metrics.model_dump(),
+                token_usage=result.usage_metrics
+            )
+            
+            # Create new task request for chaining
+            request_data = task_request.model_dump()
+            input_data = request_data.pop('inputData', None)  # Remove inputData to avoid duplication
+            chain_request = CeleryTaskRequest(
+                **request_data,
+                inputData={**input_data, **result.result_payload}
+            )
+            
+            return chain_request.model_dump() #for chaining we need to return a dict
+            
+        except Exception as e:
+            if task_id:
+                update_transaction_status(task_id, TaskStatus.FAILED, error_message=str(e))
+            raise
+            
+    return wrapper
 
-        # chuncker
-        chunks = chuncker(all_docs)
-        # Embed documents using astra db inserting 
-        # Initialize Astra client
-        astra_client = initialize_astra_client(
-            astra_api_endpoint=os.environ.get("ASTRA_DB_API_ENDPOINT"),
-            astra_token=os.environ.get("ASTRA_DB_APPLICATION_TOKEN"),
-            astra_namespace="test",
+@shared_task(bind=True)
+@with_transaction_tracking
+def create_consultant_primer(self, task_request: CeleryTaskRequest) -> TaskResult:
+    """Generate a comprehensive consultant primer based on the given topic.
+    This task analyzes the topic and creates a detailed primer document with key insights,
+    market analysis, and strategic recommendations.
+    """
+    print("task id", self.request.id)
+    agentOutput = runAgentPrimer(inputs={"topic": task_request.inputData.get("text","")})
+    
+    # Process output
+    agentOutputDict = agentOutput.model_dump()
+    token_usage = agentOutputDict.get("token_usage", {})
+    result = agentOutputDict.get("raw", {})
+    
+    return TaskResult(
+        task_id=self.request.id,
+        status=TaskStatus.COMPLETED,
+        result_payload={"unstructured_text": result},
+        usage_metrics=token_usage,
+    )
+
+@shared_task(bind=True)
+@with_transaction_tracking
+def create_personalized_email(self, task_request: CeleryTaskRequest) -> Dict[str, Any]:
+    """Create a personalized sales email based on the input data.
+    This task processes the input data through a schema processor and then generates
+    a customized email using the sales agent model.
+    """
+    # Create schema processor subtask
+    schema_request = runAgentTextToSchema(
+        **task_request.model_dump(),
+        target_model=SalesAgentInputModel
+    )
+    schema_result = create_schema_processor_task.delay(schema_request.dict()).get()
+    
+    # Generate email
+    email_result = runSalesPersonalizedEmail(schema_result.get('result_payload'))
+    
+    return {
+        "result_payload": email_result,
+        "token_usage": schema_result.get('token_usage', {}),
+        "model": schema_result.get('model', "Gemini 1.5 Pro")
+    }
+
+@shared_task(bind=True)
+@with_transaction_tracking
+def create_summariser_task(self, task_request: CeleryTaskRequest) -> Dict[str, Any]:
+    """Generate a comprehensive summary of the provided documents.
+    This task processes documents through a schema processor and then creates
+    a detailed summary using the summarizer agent.
+    """
+    # Create schema processor subtask
+    schema_request = SchemaProcessorRequest(
+        **task_request.dict(),
+        schema_type="document",
+        parent_task_id=task_request.parent_transaction_id
+    )
+    schema_result = create_schema_processor_task.delay(schema_request.dict()).get()
+    
+    # Generate summary
+    summary_result = run_summariser_agent(schema_result.get('result_payload'))
+    
+    return {
+        "result_payload": summary_result,
+        "token_usage": schema_result.get('token_usage', {}),
+        "model": schema_result.get('model', "Gemini 1.5 Pro")
+    }
+
+@shared_task(bind=True)
+@with_transaction_tracking
+def create_embed_documents(self, task_request: CeleryTaskRequest) -> TaskResult:
+    """Process and embed documents into the vector database.
+    This task:
+    1. Processes documents in batches
+    2. Creates chunks for efficient retrieval
+    3. Generates embeddings
+    4. Stores vectors in the database
+    5. Creates a unique collection for each project
+    """
+    print("parent task id", task_request.parent_transaction_id)
+    print("task id", self.request.id)
+
+    if len(task_request.documentUrls) == 0:
+        return TaskResult(
+            result_payload={},
         )
-        # Create collection
-        collection_name = "document_summariser"
-        collection = create_astra_collection(
-            collection_name=collection_name,
-            database=astra_client
-        )
+        
+    # Process documents in batches
+    batch_size = 10
+    results = []
+    
+    # Generate a valid collection name
+    collection_name = generate_collection_name(task_request.projectId, task_request.serviceId)
+    print(f"Creating collection: {collection_name}")
+    collection = create_astra_collection(
+        collection_name=collection_name,
+        database=astra_client)
+
+    for i in range(0, len(task_request.documentUrls), batch_size):
+        batch_urls = task_request.documentUrls[i:i + batch_size]
+        batch_results = []
+        for url in batch_urls:
+            file = get_file_from_url(url)
+            chunks = chuncker(file, chunk_size=500, chunk_overlap=100)
+            batch_results.extend(chunks)   
         upload_documents_to_astra(
-            collection=collection,
-            documents=chunks
+            documents=batch_results,
+            collection=collection
         )
-        self.update_state(
-            state='PROCESSING', 
-            meta={'status': 'Embedding documents', 'progress': 50}
+
+    return TaskResult(
+        result_payload={
+            "processed_documents": len(results),
+            "collection_name": collection_name
+        },
+    )
+
+@shared_task(bind=True)
+def create_schema_processor_task(self, request: Dict[str, Any]) -> Dict[str, Any]:
+    """Create a schema processor task"""
+    start_time = time.time()
+    task_request = SchemaProcessorRequest(**request)
+    
+    try:
+        # Create transaction
+        if not task_request.parent_task_id:
+            # Main task
+            transaction = create_transaction(
+                user_id=task_request.userId,
+                project_id=task_request.projectId,
+                service_id=task_request.serviceId,
+                task_type=TaskType.TASK,
+                input_data=task_request.inputData.dict() if task_request.inputData else None,
+                input_document_urls=task_request.documentUrls
+            )
+            if not transaction:
+                raise Exception("Failed to create transaction")
+            task_id = transaction['id']
+        else:
+            # Subtask
+            transaction = create_subtask(
+                parent_transaction_id=task_request.parent_task_id,
+                user_id=task_request.userId,
+                project_id=task_request.projectId,
+                service_id=task_request.serviceId,
+                task_type=TaskType.SUBTASK,
+                input_data=task_request.inputData.dict() if task_request.inputData else None,
+                input_document_urls=task_request.documentUrls
+            )
+            if not transaction:
+                raise Exception("Failed to create subtask")
+            task_id = transaction['id']
+        
+        # Update task state
+        self.update_state(state='PROCESSING', meta={'status': 'Processing schema...'})
+        update_transaction_status(task_id, TaskStatus.RUNNING)
+        
+        # Process schema
+        schema_result = run_text_to_schema(
+            task_request.inputData.dict() if task_request.inputData else {},
+            schema_type=task_request.schema_type
         )
-        request["collection_name"] = collection_name
-
-        # Update transaction status to SUCCESS
-        update_transaction_status(task_id, "SUCCESS", result=request)
-        ## need to return request values to following tasks as well as the collection name
-
-        return request
+        
+        # Track usage metrics
+        usage_metrics = track_usage_metrics(start_time)
+        
+        # Update transaction status
+        update_transaction_status(
+            task_id,
+            TaskStatus.COMPLETED,
+            result_payload=schema_result,
+            computation_usage=usage_metrics
+        )
+        
+        return TaskResult(
+            task_id=task_id,
+            status=TaskStatus.COMPLETED,
+            user_id=task_request.userId,
+            project_id=task_request.projectId,
+            service_id=task_request.serviceId,
+            parent_task_id=task_request.parent_task_id,
+            result_payload=schema_result,
+            usage_metrics=usage_metrics
+        ).dict()
+        
     except Exception as e:
-        self.update_state(
-            state='FAILURE',
-            meta={
-                'status': 'Task failed',
-                'error': str(e),
-                'task_id': task_id
-            }
-        )
-        update_transaction_status(task_id, "FAILURE", result=str(e))
-        return {
-            "task_id": task_id,
-            "status": "FAILURE",
-            "error": str(e)
-        }
+        if 'task_id' in locals():
+            update_transaction_status(task_id, TaskStatus.FAILED, error_message=str(e))
+        raise
 
+@shared_task(bind=True)
+@with_transaction_tracking
+def complete_task_chain(self, task_request: CeleryTaskRequest) -> TaskResult:
+    """Complete the task chain by aggregating results from all subtasks.
+    This task:
+    1. Retrieves all subtasks associated with the parent task
+    2. Update the parent task with the final result and document urls
+    """
+    print("Completing task chain")
+    print("Parent task id:", task_request.parent_transaction_id)
+    print("Current task id:", self.request.id)
+
+    if not task_request.parent_transaction_id:
+        print("No parent task found, returning current result")
+        return TaskResult(
+            result_payload=task_request.inputData
+        )
+
+    # Get parent task
+    parent_task = get_transaction(task_request.parent_transaction_id)
+    if not parent_task:
+        print("Parent task not found")
+        return TaskResult(
+            result_payload=task_request.inputData
+        )
+
+    # Get all subtasks
+    subtasks_data = get_subtasks(task_request.parent_transaction_id)
+    print("subtasks_data", subtasks_data)
+    if not subtasks_data:
+        print("No subtasks found")
+        return TaskResult(
+            result_payload=task_request.inputData
+        )
+    # need to get the last subtask result
+    last_subtask = subtasks_data[0]
+    last_subtask_result = last_subtask.get('result_payload')
+    last_subtask_document_urls = last_subtask.get('result_document_urls')
+
+    # Update parent task with aggregated results
+    update_transaction_status(
+        task_request.parent_transaction_id,
+        TaskStatus.COMPLETED,
+        result_payload=last_subtask_result,
+        result_document_urls=last_subtask_document_urls
+    )
+
+    return TaskResult(
+        result_payload=last_subtask_result,
+        result_document_urls=last_subtask_document_urls
+    )

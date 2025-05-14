@@ -14,7 +14,7 @@ def create_astra_collection(
     Create a vector collection in AstraDB
     
     Args:
-        collection_name: Name of the collection to create
+        collection_name: Name of the collection to create (project_id)
         database: AstraDB database client
         dimension: Dimensionality of the vector embeddings
         
@@ -153,7 +153,7 @@ def initialize_astra_client(
     Args:
         astra_api_endpoint: AstraDB API endpoint
         astra_token: AstraDB API token
-        astra_namespace: AstraDB namespace
+        astra_namespace: AstraDB namespace (service)
         
     Returns:
         AstraDB client object
@@ -162,6 +162,25 @@ def initialize_astra_client(
 
     return client.get_database(api_endpoint=astra_api_endpoint, token=astra_token, keyspace=astra_namespace)
 
+def delete_astra_collection(
+    collection_name: str,
+    database: DataAPIClient
+) -> None:
+    """
+    Delete a collection from AstraDB
+
+    Args:
+        collection_name: Name of the collection to delete
+        database: AstraDB database client
+    """
+    database.delete_collection(collection_name)
+
+
+astra_client = initialize_astra_client(
+    astra_api_endpoint=os.getenv("ASTRA_DB_API_ENDPOINT"),
+    astra_token=os.getenv("ASTRA_DB_APPLICATION_TOKEN"),
+    astra_namespace="test"
+)
 
 if __name__ == "__main__":
     # Example usage

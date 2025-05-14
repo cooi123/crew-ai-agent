@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 import sys
 from crewai_tools import DirectoryReadTool
-from sales_personalized_email.crew import SalesPersonalizedEmailCrew
-from sales_personalized_email.models import (SalesAgentInputModel, PersonalizedEmail)
+from .crew import SalesPersonalizedEmailCrew
+from .models import (SalesAgentInputModel, PersonalizedEmail)
 
 # This main file is intended to be a way for your to run your
 # crew locally, so refrain from adding necessary logic into this file.
@@ -10,13 +10,13 @@ from sales_personalized_email.models import (SalesAgentInputModel, PersonalizedE
 # interpolate any tasks and agents information
 
 
-def run(input: SalesAgentInputModel, **kargs) -> PersonalizedEmail:
+def runSalesPersonalizedEmail(input: SalesAgentInputModel, **kargs) -> PersonalizedEmail:
     """
     Run the crew.
     """
     input_dict = input.model_dump()
 
-    return SalesPersonalizedEmailCrew().crew().kickoff(inputs=input_dict).pydantic
+    return SalesPersonalizedEmailCrew().crew().kickoff(inputs=input_dict)
 
 
 def train():

@@ -2,7 +2,7 @@ from crewai_tools import ScrapeWebsiteTool, SerperDevTool, DirectoryReadTool, Fi
 
 from crewai import Agent, Crew, Process, Task
 from crewai.project import CrewBase, agent, crew, task
-from sales_personalized_email.models import PersonalizedEmail
+from .models import PersonalizedEmail
 
 
 

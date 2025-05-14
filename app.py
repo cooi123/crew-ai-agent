@@ -1,55 +1,101 @@
-#!/usr/bin/env python
-import sys
-import os
-sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
-import uvicorn
-from pydantic import BaseModel
-from typing import Optional
-from celery.result import AsyncResult
-from src.models.base_models import BaseServiceRequest
+from typing import Dict, Any, Optional
 from urllib.parse import urlparse
-from src.tasks.celery_tasks import create_consultant_primer, create_personalized_email, create_embed_documents, create_summariser_task
+from pydantic import BaseModel
+from src.models.task_models import (
+    TaskStatus, TaskType, CeleryTaskRequest, TaskResult
+)
+from src.tasks.celery_tasks import (
+    create_consultant_primer,
+    create_personalized_email,
+    create_summariser_task,
+    create_embed_documents,
+    create_schema_processor_task,
+    complete_task_chain
+)
+from src.utils.supabase_utils import create_transaction, update_transaction_status
+from src.models.base_models import BaseServiceRequest
 
-class TaskResponse(BaseModel):
-    """Response for asynchronous tasks"""
-    task_id: str
-    status: str
-    message: str
-    result: Optional[dict] = None
+app = FastAPI()
 
-load_dotenv()
-app = FastAPI(title="Studio Agents")
+#add middleware for cors
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-@app.get("/")
-def default():
-    return "Welcome to Studio Agents"
 
-service_endpoints = {
+
+
+
+class TaskResponse(BaseModel):
+    """Response model for task creation"""
+    task_id: str
+    status: TaskStatus
+
+@app.post("/service/run")
+async def run_service(request: BaseServiceRequest) -> TaskResponse:
+    """Universal endpoint to handle service requests"""
+    try:
+        # Parse service URL
+        service_url = request.serviceUrl
+        if not service_url:
+            raise HTTPException(status_code=400, detail="serviceUrl is required")
+            
+        parsed_url = urlparse(service_url)
+        service_path = parsed_url.path.strip("/")
+        # Create initial transaction with 'received' status
+        transaction = create_transaction(
+            request,
+            description="Received request"
+        )
+        
+        if not transaction:
+            raise HTTPException(status_code=500, detail="Failed to create transaction")
+            
+        task_id = transaction['id']
+        
+        # Create task request with parent task ID
+        task_request = CeleryTaskRequest.from_base_request(request, parent_transaction_id=task_id)
+        try:
+            task_request = task_to_service_routing(task_request)
+        except Exception as e:
+            update_transaction_status(task_id, TaskStatus.FAILED, error_message=str(e))
+            raise HTTPException(status_code=500, detail=str(e))
+        
+        update_transaction_status(task_id, TaskStatus.PENDING)
+        
+        return TaskResponse(
+            task_id=task_id,
+            status=TaskStatus.PENDING
+        )
+        
+    except Exception as e:
+        if 'task_id' in locals():
+            update_transaction_status(task_id, TaskStatus.FAILED, error_message=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) 
+    
+
+def task_to_service_routing(task_request: CeleryTaskRequest) -> CeleryTaskRequest:
+    """
+    Route the task to the appropriate service
+    for internal service would just trigger the task directly
+
+    todo : for external service would need to perform a POST request to the service
+    """
+    service_endpoints = {
         "primer": "/primer",
         "email": "/personalizedEmail",
         "summariser": "/summariser",
     }
-
-@app.post("/service/run", response_model=TaskResponse)
-async def run_service(
-    request: BaseServiceRequest,
-):
-    """Universal endpoint to run any service based on service_id"""
-    print(f"Request received: {request}")
-    matching_service = None
-    if request.serviceUrl:
-        parsed_url = urlparse(request.serviceUrl)
-        path = parsed_url.path
+    #check mathcing service in the service_endpoints
+    if task_request.serviceUrl:
+        parsed_url = urlparse(task_request.serviceUrl)
+        path= parsed_url.path
         for service, endpoint in service_endpoints.items():
             if path.endswith(endpoint):
                 matching_service = service
@@ -57,70 +103,25 @@ async def run_service(
         else:
             raise HTTPException(status_code=400, detail="Invalid service URL")
     
-    # Create a chain of tasks if we have documents to embed
-    if len(request.documentUrls) > 0:
-        print("Embedding documents")
-        # Create task chain based on the service
-        if matching_service == "primer":
-            chain = create_embed_documents.s(request.model_dump()) | create_consultant_primer.s()
-            task_result = chain()
-            task_id = task_result.id
-        elif matching_service == "email":
-            chain = create_embed_documents.s(request.model_dump()) | create_personalized_email.s()
-            task_result = chain()
-            task_id = task_result.id
-        elif matching_service == "summariser":
-            chain = create_embed_documents.s(request.model_dump()) | create_summariser_task.s()
-            task_result = chain()
-            task_id = task_result.id
-        else:
-            # Just embed documents if no matching service or for other purposes
-            task_result = create_embed_documents.delay(request.model_dump())
-            task_id = task_result.id
+    #dtermine which task to trigger first 
+    task_function = None
+    if matching_service == "primer":
+        #trigger embedding document first 
+        task_function = create_consultant_primer
+        
+    elif matching_service == "summariser":
+        #trigger schema processor first 
+        task_function = create_schema_processor_task
+
+    elif matching_service == "email":
+        #trigger email task first 
+        task_function = create_personalized_email
     else:
-        # No documents to embed, directly call the service task
-        if matching_service == "primer":
-            task_result = create_consultant_primer.delay(request.model_dump())
-            task_id = task_result.id
-        elif matching_service == "email":
-            task_result = create_personalized_email.delay(request.model_dump())
-            task_id = task_result.id
-        elif matching_service == "summariser":
-            task_result = create_summariser_task.delay(request.model_dump())
-            task_id = task_result.id
-        else:
-            # Handle the case when no matching service is found
-            raise HTTPException(status_code=400, detail="No valid service specified")
+        raise HTTPException(status_code=400, detail="Invalid service URL")
     
-    return {
-        "task_id": task_id,
-        "status": "pending",
-        "message": "Task is pending"
-    }
-
-@app.get("/tasks/{task_id}", response_model=TaskResponse)
-def get_task_status(task_id: str):
-    """Get the status of a task"""
-    result = AsyncResult(task_id)
-    if result.state == 'PENDING':
-        return {"status": "pending", "message": "Task is pending"}
-    elif result.state == 'SUCCESS': 
-        return {"status": "success", "message": "Task completed successfully", "result": result.result}
-    elif result.state == 'FAILURE':
-        return {"status": "failure", "message": str(result.info)}
-    else:
-        return {"status": result.state, "message": str(result.info)}
-    
+    #trigger the first task with embedding document first 
+    chain = create_embed_documents.s(task_request.model_dump()) | task_function.s() | complete_task_chain.s()
+    task = chain.apply_async()
+    return task
 
 
-# async def register_service(){
-
-
-# }
-
-
-
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run("app:app", host="0.0.0.0", port=port, workers=1, log_level="info", reload=False)
-    print("Server started on port", port)

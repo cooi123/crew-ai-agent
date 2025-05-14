@@ -1,5 +1,4 @@
-import sys
-from crewai_primer_maker.crew import PrimerCrew  # Make sure the path is correct
+from .crew import PrimerCrew  # Make sure the path is correct
 
 def runAgentPrimer(inputs, **kwargs):
     
