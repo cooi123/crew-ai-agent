@@ -5,7 +5,7 @@ from datetime import datetime
 import json
 from typing import Optional, Dict, Any, Union, List
 from src.models.base_models import BaseServiceRequest
-from src.models.task_models import CeleryTaskRequest
+from src.models.task_models import CeleryTaskRequest, TokenUsage, ComputationalUsage
 load_dotenv()
 
 # Get Supabase credentials
@@ -14,6 +14,23 @@ SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 
 # Initialize Supabase client with service role key
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+
+# Add custom exceptions at the top of the file after imports
+class TransactionError(Exception):
+    """Base exception for transaction-related errors"""
+    pass
+
+class TransactionNotFoundError(TransactionError):
+    """Raised when a transaction is not found"""
+    pass
+
+class TransactionUpdateError(TransactionError):
+    """Raised when there's an error updating a transaction"""
+    pass
+
+class InvalidInputError(TransactionError):
+    """Raised when input parameters are invalid"""
+    pass
 
 def create_transaction(
     request: BaseServiceRequest | CeleryTaskRequest,
@@ -79,14 +96,15 @@ def create_transaction(
 
 def update_transaction_status(
     transaction_id: str,
-    status: str,
+    task_status: str,
     result_payload: Optional[Dict[str, Any]] = None,
     result_document_urls: Optional[List[str]] = None,
     error_message: Optional[str] = None,
-    token_usage: Optional[Dict[str, Any]] = None,
-    computation_usage: Optional[Dict[str, Any]] = None,
-    description: Optional[str] = None
-) -> Optional[Dict[str, Any]]:
+    token_usage: Optional[Dict[str, Any]] = {},
+    computation_usage: Optional[Dict[str, Any]] = {},
+    description: Optional[str] = None,
+    **kwargs
+) -> Dict[str, Any]:
     """
     Update an existing transaction record with new status and result
     
@@ -98,84 +116,79 @@ def update_transaction_status(
     - error_message: Error message if failed
     - computation_usage: Dictionary containing usage metrics (tokens, runtime, costs)
     - token_usage: Dictionary containing token usage metrics (prompt, completion, total)
+    
+    Returns:
+    - Dict containing the updated transaction data
+    
+    Raises:
+    - InvalidInputError: If required parameters are missing
+    - TransactionNotFoundError: If transaction is not found
+    - TransactionUpdateError: If there's an error updating the transaction
     """
+    if not transaction_id:
+        raise InvalidInputError("transaction_id is required")
+        
+    if not task_status:
+        raise InvalidInputError("task_status is required")
+        
     try:
-        # First check if the task is already completed
-        current_task = supabase.table('transactions').select('status').eq('id', transaction_id).execute()
-        if current_task.data and current_task.data[0]['status'] == 'completed':
-            print(f"Task {transaction_id} is already completed, skipping update")
-            return current_task.data
-
+        # Create update data dictionary
         update_data = {
-            'status': status,
+            'status': task_status,
             'updated_at': datetime.now().isoformat()
         }
         
-        if status in ['completed', 'failed']:
-            update_data['updated_at'] = datetime.now().isoformat()
+        # Add optional fields if they exist
         if result_payload is not None:
-            # Ensure result_payload is JSON serializable
-            if isinstance(result_payload, dict):
-                update_data['result_payload'] = result_payload
-            else:
-                update_data['result_payload'] = result_payload.model_dump() if hasattr(result_payload, 'model_dump') else str(result_payload)
-            
+            update_data['result_payload'] = result_payload
         if result_document_urls is not None:
             update_data['result_document_urls'] = result_document_urls
-            
         if error_message is not None:
             update_data['error_message'] = error_message
+        if description is not None:
+            update_data['description'] = description
             
-        if computation_usage is not None:
-            # Update usage metrics
-            update_data.update({
-                'prompt_tokens': token_usage.get('prompt_tokens'),
-                'completion_tokens': token_usage.get('completion_tokens'),
-                'tokens_total': token_usage.get('total_tokens'),
-                'runtime_ms': computation_usage.get('runtime_ms'),
-                'resources_used': computation_usage.get('resources_used', {}),
-                'resources_used_count': computation_usage.get('resources_used_count', 0),
-                'resources_used_cost': computation_usage.get('resources_used_cost', 0),
-                'resource_type': computation_usage.get('resource_type', 'llm'),
-                'model_name': computation_usage.get('model_name')
-                
-            })
+        # Handle token usage metrics
+        if token_usage:
+            try:
+                update_data.update({
+                    'prompt_tokens': token_usage.get('prompt_tokens'),
+                    'completion_tokens': token_usage.get('completion_tokens'),
+                    'tokens_total': token_usage.get('tokens_total'),
+                    'model_name': token_usage.get('model_name')
+                })
+            except Exception as e:
+                raise TransactionUpdateError(f"Error processing token usage metrics: {str(e)}")
+            
+        # Handle computation usage metrics
+        if computation_usage:
+            try:
+                update_data.update({
+                    'runtime_ms': computation_usage.get('runtime_ms'),
+                    'resources_used': computation_usage.get('resources_used', {})
+                })
+            except Exception as e:
+                raise TransactionUpdateError(f"Error processing computation usage metrics: {str(e)}")
             
         # Update the transaction
-        response = supabase.table('transactions').update(update_data).eq('id', transaction_id).execute()
-        print(f"Transaction updated: {response.data}")
-        
-        # If this is a subtask, check and update parent task status
-        if response.data:
-            transaction = response.data[0]
-            if transaction.get('parent_transaction_id'):
-                # Get all subtasks for the parent
-                subtasks = supabase.table('transactions').select('status').eq('parent_transaction_id', transaction['parent_transaction_id']).execute()
+        try:
+            response = supabase.table('transactions').update(update_data).eq('id', transaction_id).execute()
+            
+            if not response.data:
+                raise TransactionNotFoundError(f"Transaction {transaction_id} not found or no data returned after update")
                 
-                if subtasks.data:
-                    # Check if all subtasks are completed
-                    all_completed = all(st['status'] == 'completed' for st in subtasks.data)
-                    # Check if any subtask failed
-                    any_failed = any(st['status'] == 'failed' for st in subtasks.data)
-                    
-                    # Update parent task status
-                    if any_failed:
-                        parent_status = 'failed'
-                    elif all_completed:
-                        parent_status = 'completed'
-                    else:
-                        parent_status = 'running'
-                        
-                    # Update parent task
-                    supabase.table('transactions').update({
-                        'status': parent_status,
-                        'updated_at': datetime.now().isoformat()
-                    }).eq('id', transaction['parent_transaction_id']).execute()
-        
-        return response.data
+            return response.data[0]
+            
+        except Exception as e:
+            raise TransactionUpdateError(f"Error updating transaction in Supabase: {str(e)}")
+            
+    except TransactionError:
+        # Re-raise TransactionError subclasses
+        raise
     except Exception as e:
-        print(f"Error updating transaction: {str(e)}")
-        return None
+        raise TransactionUpdateError(f"Unexpected error in update_transaction_status: {str(e)}")
+
+    
 
 def create_subtask(
     parent_task_id: str,
@@ -210,4 +223,12 @@ def get_subtasks(parent_task_id: str) -> Optional[List[Dict[str, Any]]]:
     response = supabase.table('transactions').select('*').eq('parent_transaction_id', parent_task_id).order('created_at', desc=True).execute()
     # Return only the list of subtask records
     return response.data if hasattr(response, 'data') else []
+
+
+def get_service(service_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Get a service by its ID
+    """
+    response = supabase.table('services').select('*').eq('id', service_id).execute()
+    return response.data[0] if response.data else None
 

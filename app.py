@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict, Any, Optional
 from urllib.parse import urlparse
@@ -14,9 +14,12 @@ from src.tasks.celery_tasks import (
     create_schema_processor_task,
     complete_task_chain
 )
-from src.utils.supabase_utils import create_transaction, update_transaction_status
+from src.utils.supabase_utils import create_transaction, update_transaction_status, get_service
 from src.models.base_models import BaseServiceRequest
-
+import httpx
+import os
+from dotenv import load_dotenv
+load_dotenv() 
 app = FastAPI()
 
 #add middleware for cors
@@ -38,19 +41,25 @@ class TaskResponse(BaseModel):
     status: TaskStatus
 
 @app.post("/service/run")
-async def run_service(request: BaseServiceRequest) -> TaskResponse:
-    """Universal endpoint to handle service requests"""
+async def run_service(payload: BaseServiceRequest, request: Request) -> TaskResponse:
+    """Universal endpoint to handle service requests
+    check if the proivded service url matches the service table in the database
+    if it does, trigger the task directly
+    otherwise fail with a 400 error
+
+    """
+
+    callback_url = f"{request.base_url}task/result"
+    print(f"Callback URL: {callback_url}")
     try:
         # Parse service URL
-        service_url = request.serviceUrl
+        service_url = payload.serviceUrl
         if not service_url:
             raise HTTPException(status_code=400, detail="serviceUrl is required")
-            
-        parsed_url = urlparse(service_url)
-        service_path = parsed_url.path.strip("/")
+        
         # Create initial transaction with 'received' status
         transaction = create_transaction(
-            request,
+            payload,
             description="Received request"
         )
         
@@ -58,27 +67,50 @@ async def run_service(request: BaseServiceRequest) -> TaskResponse:
             raise HTTPException(status_code=500, detail="Failed to create transaction")
             
         task_id = transaction['id']
+        #check if the service url matches the service table in the database
+        service_data = get_service(payload.serviceId)
+        if not service_data:
+            raise HTTPException(status_code=400, detail="Invalid service ID")
         
-        # Create task request with parent task ID
-        task_request = CeleryTaskRequest.from_base_request(request, parent_transaction_id=task_id)
-        try:
-            task_request = task_to_service_routing(task_request)
-        except Exception as e:
-            update_transaction_status(task_id, TaskStatus.FAILED, error_message=str(e))
-            raise HTTPException(status_code=500, detail=str(e))
-        
-        update_transaction_status(task_id, TaskStatus.PENDING)
-        
+        service_url = service_data['url']
+        if service_url != payload.serviceUrl:
+            raise HTTPException(status_code=400, detail="Invalid service URL")
+        task_request = CeleryTaskRequest.from_base_request(
+            payload,
+            parent_transaction_id=task_id,
+            callback_url=callback_url
+        )
+        # Serialize to JSON-friendly dict, converting enums to the ddir values
+        task_payload = task_request.model_dump(mode="json")
+        print(f"Task request: {task_payload}")
+        #tirgger task by doing a POST request to the service dont need to wait for the response
+        async with httpx.AsyncClient() as client:
+            print(f"Triggering task to {service_url}")
+            response = await client.post(service_url, json=task_payload)
+            if response.status_code != 200:
+                raise HTTPException(status_code=500, detail="Failed to trigger task")
+
         return TaskResponse(
             task_id=task_id,
             status=TaskStatus.PENDING
         )
-        
+
     except Exception as e:
-        if 'task_id' in locals():
-            update_transaction_status(task_id, TaskStatus.FAILED, error_message=str(e))
-        raise HTTPException(status_code=500, detail=str(e)) 
+        raise HTTPException(status_code=500, detail=str(e))
+        
     
+
+@app.post("/task/result")
+async def recieve_task_result(result: TaskResult):
+    """
+    Recieve the task result from the service
+    """
+    # print(f"Recieved task result: {result.model_dump()}")
+    try:
+        update_transaction_status(transaction_id=result.parent_transaction_id, **result.model_dump())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return result
 
 def task_to_service_routing(task_request: CeleryTaskRequest) -> CeleryTaskRequest:
     """
